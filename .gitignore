@@ -3,5 +3,8 @@ suku/
 ward_count/
 test/
 TF-IDF/
+recommended/
+.venv/
+
 
 
