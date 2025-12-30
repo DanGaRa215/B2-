@@ -28,9 +28,10 @@ class StoreRecommender:
         """DBから店舗ベクトルと基本情報をロード"""
         try:
             conn = psycopg2.connect(host="localhost", database=self.db_name, user=self.user)
-            
-            # ベクトルと評価点を取得
-            query = """
+
+            # ベクトルと評価点を取得（レビュー数10件以上のみ）
+            MIN_REVIEWS = 10
+            query = f"""
             SELECT
                 s.store_id,
                 s.store_name,
@@ -39,6 +40,12 @@ class StoreRecommender:
                 v.feature_vector
             FROM stores s
             JOIN store_vectors v ON s.store_id = v.store_id
+            JOIN (
+                SELECT store_id, COUNT(*) as review_count
+                FROM reviews
+                GROUP BY store_id
+                HAVING COUNT(*) >= {MIN_REVIEWS}
+            ) r ON s.store_id = r.store_id
             WHERE s.overall_rating IS NOT NULL
             """
             df = pd.read_sql(query, conn)
@@ -57,8 +64,8 @@ class StoreRecommender:
             max_rating = 5.0
             self.normalized_ratings = (self.ratings - min_rating) / (max_rating - min_rating)
             self.normalized_ratings = np.clip(self.normalized_ratings, 0, 1)
-            
-            print(f"Loaded {len(df)} stores.")
+
+            print(f"Loaded {len(df)} stores (minimum {MIN_REVIEWS} reviews).")
             
         except Exception as e:
             print(f"Error loading data: {e}")
