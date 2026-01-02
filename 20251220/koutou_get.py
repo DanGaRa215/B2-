@@ -3,6 +3,7 @@ import time
 import random
 import csv
 import json
+import tempfile
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -27,6 +28,10 @@ class TabelogScraper:
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         
+        # プロファイル破損による起動失敗を防ぐための一時ディレクトリ使用
+        user_data_dir = tempfile.mkdtemp()
+        options.add_argument(f'--user-data-dir={user_data_dir}')
+        
         # ヘッドレスモードの設定
         if headless:
             options.add_argument("--headless=new")
@@ -35,9 +40,6 @@ class TabelogScraper:
         options.add_argument('user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36')
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
-        
-        # ポート指定は競合の原因になる可能性があるため削除
-        # options.add_argument("--remote-debugging-port=9222")
 
         print("ChromeDriverを起動しています...")
         try:

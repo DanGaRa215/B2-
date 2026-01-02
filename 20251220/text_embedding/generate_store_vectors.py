@@ -3,15 +3,16 @@ import torch
 from transformers import BertJapaneseTokenizer, BertModel
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
+import fcntl
+import sys
+import os
 
 # モデル設定
 MODEL_NAME = 'cl-tohoku/bert-base-japanese-v3'
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-if torch.backends.mps.is_available():
-    DEVICE = 'mps' # Mac M1/M2用
 
-print(f"Using device: {DEVICE}")
+# MPSは不安定なためCPUモードで実行（安定性優先）
+DEVICE = 'cpu'
+print(f"Using device: {DEVICE} (CPUモード - 安定性優先)")
 
 def get_store_reviews(conn):
     """
@@ -28,8 +29,23 @@ def get_store_reviews(conn):
     return pd.read_sql(query, conn)
 
 def generate_vectors(db_name='tabelog_db', user='dangararara'):
+    # プロセスロックの取得（同時実行を防ぐ）
+    lock_file = '/tmp/generate_store_vectors.lock'
+    lock_fp = open(lock_file, 'w')
+    try:
+        fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print("✓ プロセスロックを取得しました")
+    except IOError:
+        print("❌ エラー: 既に別のプロセスが実行中です")
+        print("他のプロセスが完了するまで待つか、停止してから再実行してください")
+        sys.exit(1)
+
     # 1. モデルとトークナイザーのロード
     print("モデルをロード中...")
+
+    # マルチプロセス処理を無効化（resource_tracker警告対策）
+    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
     tokenizer = BertJapaneseTokenizer.from_pretrained(MODEL_NAME)
     model = BertModel.from_pretrained(MODEL_NAME)
     model.to(DEVICE)
@@ -44,15 +60,36 @@ def generate_vectors(db_name='tabelog_db', user='dangararara'):
         # 3. データ取得
         print("レビューデータを取得中...")
         df = get_store_reviews(conn)
-        print(f"取得完了: {len(df)} 店舗")
+        print(f"全店舗数: {len(df)} 店舗")
+
+        # 既存のベクトル済み店舗を取得してスキップ
+        try:
+            cur.execute("SELECT store_id FROM store_vectors")
+            existing_ids = set(row[0] for row in cur.fetchall())
+            print(f"ベクトル生成済み: {len(existing_ids)} 店舗")
+            
+            df = df[~df['store_id'].isin(existing_ids)]
+            print(f"今回処理対象: {len(df)} 店舗")
+        except Exception as e:
+            print(f"既存データの確認中にエラー（初回実行時は無視してください）: {e}")
+            conn.rollback()
+
+        if len(df) == 0:
+            print("全ての店舗のベクトル生成が完了しています。")
+            return
 
         # 4. ベクトル生成と保存
         print("ベクトル生成を開始します...")
-        
-        batch_size = 16
+
+        # バッチサイズを小さくしてメモリ使用量を削減（MPS対策）
+        batch_size = 4  # 16 -> 4 に変更
         total_processed = 0
-        
-        for i in tqdm(range(0, len(df), batch_size)):
+
+        # 進捗表示
+        total_batches = (len(df) + batch_size - 1) // batch_size
+        print(f"総バッチ数: {total_batches}")
+
+        for batch_idx, i in enumerate(range(0, len(df), batch_size)):
             batch = df.iloc[i:i+batch_size]
             texts = batch['combined_text'].tolist()
             store_ids = batch['store_id'].tolist()
@@ -94,14 +131,38 @@ def generate_vectors(db_name='tabelog_db', user='dangararara'):
             conn.commit()
             total_processed += len(batch)
 
-        print(f"完了: {total_processed} 店舗のベクトルを保存しました。")
+            # 10バッチごとに進捗を表示
+            if (batch_idx + 1) % 10 == 0:
+                cur.execute("SELECT COUNT(*) FROM store_vectors")
+                current_total = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM stores")
+                all_stores = cur.fetchone()[0]
+                progress_pct = current_total / all_stores * 100
+                print(f"  バッチ {batch_idx + 1}/{total_batches} | 完了: {current_total}/{all_stores} ({progress_pct:.1f}%)")
+
+            # Mac (MPS) の場合のメモリ解放処理
+            if DEVICE == 'mps':
+                torch.mps.empty_cache()
+
+        print(f"\n✓ 完了: {total_processed} 店舗のベクトルを保存しました。")
 
     except Exception as e:
-        print(f"エラー: {e}")
+        print(f"❌ エラー: {e}")
         conn.rollback()
     finally:
         if 'conn' in locals() and conn:
             conn.close()
+        # ロックファイルを解放
+        if 'lock_fp' in locals():
+            fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
+            lock_fp.close()
+            print("✓ プロセスロックを解放しました")
 
 if __name__ == "__main__":
-    generate_vectors()
+    import traceback
+    try:
+        generate_vectors()
+    except Exception as e:
+        print(f"\n致命的エラー: {e}")
+        traceback.print_exc()
+        sys.exit(1)
