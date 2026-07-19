@@ -5,6 +5,28 @@ import os
 from pathlib import Path
 from tqdm import tqdm
 
+
+def parse_review_date(date_str):
+    """
+    レビュー日付を YYYY-MM-DD に整える
+
+    CSV には '2025/11訪問\\n1\\n回目' の形で入っている。
+    import_all_csv.py と同じ結果になるよう揃えること。
+    片方だけ生の値を入れると同じ列に 2 種類の形式が混在する。
+    """
+    if pd.isna(date_str):
+        return None
+    try:
+        date_str = str(date_str).split('訪問')[0].strip()
+        if '/' in date_str:
+            parts = date_str.split('/')
+            if len(parts) >= 2:
+                return f"{parts[0]}-{parts[1].zfill(2)}-01"
+    except Exception:
+        pass
+    return None
+
+
 def init_database(db_name='tabelog_db', user='dangararara'):
     """
     データベースの初期化
@@ -123,7 +145,7 @@ def load_csv_data(conn, cur, data_dir=None):
                         'store_id': store_id,
                         'reviewer_name': row['レビュアー'] if pd.notna(row['レビュアー']) else None,
                         'review_rating': review_rating,
-                        'review_date': row['レビュー日付'] if pd.notna(row['レビュー日付']) else None,
+                        'review_date': parse_review_date(row['レビュー日付']),
                         'review_text': str(row['レビュー本文']).strip()
                     })
 
