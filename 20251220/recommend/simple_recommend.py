@@ -223,6 +223,6 @@ def recommend_with_all_alphas(query: str, top_n: int = 5):
 # ========== 実行 ==========
 if __name__ == "__main__":
     # ここにクエリを入力するだけ！
-    recommend_with_all_alphas("アンティークでレトロなカフェ", top_n=5)
+    recommend_with_all_alphas("デートで使える落ち着いた雰囲気の店", top_n=5)
 
-    recommend_with_all_alphas("特別な日に使えそうな感じで静かで落ち着ける", top_n=5)
+    recommend_with_all_alphas("気軽にコスパよく友達と行ける", top_n=5)

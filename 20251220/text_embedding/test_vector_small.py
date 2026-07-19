@@ -83,22 +83,21 @@ def generate_vectors(db_name='tabelog_db', user='dangararara'):
         # cur.execute("CREATE INDEX IF NOT EXISTS idx_review_vectors_store_id ON review_vectors(store_id)")
         print("✓ テーブル確認完了")
 
-        # 既に処理済みのレビュー数を確認（COUNTは遅いのでスキップ）
-        # cur.execute("SELECT COUNT(*) FROM review_vectors")
-        # already_processed = cur.fetchone()[0]
-        already_processed = 0  # 簡略化のため0に設定
-        print(f"処理済みカウントはスキップ（進捗表示は未処理分のみ表示）")
+        # 既に処理済みのレビュー数を確認
+        cur.execute("SELECT COUNT(*) FROM review_vectors")
+        already_processed = cur.fetchone()[0]
+        print(f"既に処理済み: {already_processed:,} 件")
 
         # 未処理のレビューデータのみを取得（review_id, review_text, store_id）
-        # LEFT JOINで高速化（NOT INより数十倍高速）
-        print("未処理のレビューデータを取得中...")
+        # テスト用: 100件のみ処理
+        print("未処理のレビューデータを取得中（テスト: 100件のみ）...")
         query = """
-        SELECT r.review_id, r.review_text, r.store_id
-        FROM reviews r
-        LEFT JOIN review_vectors rv ON r.review_id = rv.review_id
-        WHERE r.review_text IS NOT NULL AND r.review_text != ''
-          AND rv.review_id IS NULL
-        ORDER BY r.review_id
+        SELECT review_id, review_text, store_id
+        FROM reviews
+        WHERE review_text IS NOT NULL AND review_text != ''
+          AND review_id NOT IN (SELECT review_id FROM review_vectors)
+        ORDER BY review_id
+        LIMIT 100
         """
         cur.execute(query)
         all_reviews = cur.fetchall()  # 先に全て取得
@@ -206,7 +205,7 @@ def generate_vectors(db_name='tabelog_db', user='dangararara'):
         if conn:
             conn.close()
         if 'lock_fp' in locals():
-            fcntl.flock(ock_fp.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
             lock_fp.close()
             print("✓ プロセスロックを解放しました")
 
