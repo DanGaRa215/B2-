@@ -168,6 +168,15 @@ def upsert_assignments(conn, pairs):
 def save_centroids(conn, centroids: np.ndarray):
     pairs = [(int(i), centroids[i].tolist()) for i in range(centroids.shape[0])]
     with conn.cursor() as cur:
+        # 前回より K を減らした場合、UPSERT だけでは古い重心が残る。
+        # 残った重心は推薦時に選ばれるが対応するレビューが無いため
+        # 無言で 0 件を返す原因になるので先に削除する。
+        cur.execute(
+            f"DELETE FROM {OUT_CENTROID_TABLE} WHERE cluster_id >= %s",
+            (centroids.shape[0],)
+        )
+        if cur.rowcount:
+            print(f"[centroids] 古い重心を {cur.rowcount} 個削除しました")
         execute_values(
             cur,
             f"""
