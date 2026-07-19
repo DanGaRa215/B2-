@@ -134,7 +134,14 @@ def normalize_ratings(ratings: Dict[str, Optional[float]]) -> Dict[str, float]:
         normalized[store_id] = 0.5 if span == 0 else (r - lo) / span
     return normalized
 
-def calculate_hybrid_scores(conn, query_vec: np.ndarray, cluster_ids: List[int], alpha: float) -> List[Dict]:
+def build_store_scores(conn, query_vec: np.ndarray, cluster_ids: List[int]) -> Dict[str, Dict]:
+    """
+    店舗ごとの類似度と評価を求める（α に依存しない部分）
+
+    上位クラスタのレビューは 40 万件規模あり、ベクトルの取得だけで数 GB になる。
+    α の値ごとに取り直すと同じ処理を 4 回繰り返すことになるため、
+    α を含まない計算はここで 1 回だけ済ませる。
+    """
     store_reviews = get_reviews_from_clusters(conn, cluster_ids)
     if not store_reviews:
         raise RuntimeError(
@@ -164,25 +171,31 @@ def calculate_hybrid_scores(conn, query_vec: np.ndarray, cluster_ids: List[int],
         # None のまま渡す。normalize_ratings が中央値として扱う
         store_ratings[store_id] = rating
 
-    # 類似度を正規化（0〜1にクリッピング）
     normalized_similarities = normalize_similarities(store_similarities)
-    # 星評価を固定範囲(1.0〜5.0)で正規化
     normalized_ratings = normalize_ratings(store_ratings)
 
-    hybrid_scores = []
+    scores = {}
     for store_id in store_similarities:
-        norm_similarity = normalized_similarities.get(store_id, 0.0)
-        norm_rating = normalized_ratings.get(store_id, 0.0)
-        hybrid_score = alpha * norm_similarity + (1 - alpha) * norm_rating
-
+        if store_id not in store_info:
+            continue
         info = store_info[store_id].copy()
-        info['similarity_score'] = norm_similarity
-        info['normalized_rating'] = norm_rating
-        info['hybrid_score'] = hybrid_score
-        hybrid_scores.append(info)
+        info['similarity_score'] = normalized_similarities.get(store_id, 0.0)
+        info['normalized_rating'] = normalized_ratings.get(store_id, 0.0)
+        scores[store_id] = info
+    return scores
 
-    hybrid_scores.sort(key=lambda x: x['hybrid_score'], reverse=True)
-    return hybrid_scores
+
+def rank_by_alpha(scores: Dict[str, Dict], alpha: float) -> List[Dict]:
+    """build_store_scores の結果に α を適用して並べ替える"""
+    ranked = []
+    for info in scores.values():
+        info = info.copy()
+        info['hybrid_score'] = (
+            alpha * info['similarity_score'] + (1 - alpha) * info['normalized_rating']
+        )
+        ranked.append(info)
+    ranked.sort(key=lambda x: x['hybrid_score'], reverse=True)
+    return ranked
 
 def get_sample_reviews(conn, store_id: str, cluster_ids: List[int], limit: int = 2) -> List[str]:
     cur = conn.cursor()
@@ -220,6 +233,11 @@ def recommend_with_all_alphas(query: str, top_n: int = 5):
     print(f"類似クラスタ (Top {TOP_K_CLUSTERS}):", end=" ")
     print(", ".join([f"cluster_{cid}" for cid, _ in similar_clusters[:5]]) + "...")
 
+    # α に依存しない計算はここで 1 回だけ行う
+    print("レビューを集計中...")
+    scores = build_store_scores(conn, query_vec, cluster_ids)
+    print(f"対象店舗: {len(scores):,} 件")
+
     # 4つのα値で推薦
     alpha_values = [0.0, 0.3, 0.7, 1.0]
 
@@ -228,7 +246,7 @@ def recommend_with_all_alphas(query: str, top_n: int = 5):
         print(f"α = {alpha} (クエリ類似度: {alpha*100:.0f}%, 星評価: {(1-alpha)*100:.0f}%)")
         print("=" * 80)
 
-        ranked_stores = calculate_hybrid_scores(conn, query_vec, cluster_ids, alpha=alpha)
+        ranked_stores = rank_by_alpha(scores, alpha)
         top_stores = ranked_stores[:top_n]
 
         for i, store in enumerate(top_stores, 1):
