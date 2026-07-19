@@ -20,6 +20,11 @@ MODEL_NAME = 'pkshatech/simcse-ja-bert-base-clcmlp'
 TOP_K_CLUSTERS = 10
 TOP_N_STORES = 5
 
+# 類似度の縮小推定の強さ。レビュー数がこの値のとき、店舗の実測値と
+# 全体平均を半々で混ぜる。0 にすると単純平均に戻り、レビューが
+# 1 件だけの店が上位を独占する。
+SHRINKAGE_M = 5
+
 # モデル初期化
 print(f"モデル読み込み中: {MODEL_NAME}")
 device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -82,19 +87,37 @@ def get_reviews_from_clusters(conn, cluster_ids: List[int]) -> Dict[str, List[Tu
     return store_reviews
 
 def calculate_store_similarity(query_vec: np.ndarray, store_reviews: Dict[str, List[Tuple[int, np.ndarray]]]) -> Dict[str, float]:
-    store_similarities = {}
+    """
+    店舗ごとのクエリとの類似度を求める
+
+    単純平均を取ると、レビューが 1 件しかない店がその 1 件の当たり外れで
+    最上位にも最下位にもなる。実際に上位 20 店がすべてレビュー 1 件の店で
+    占められていたため、件数が少ない店の値を全体平均へ寄せる。
+
+    寄せる強さは SHRINKAGE_M で決まる。レビュー数がこの値のとき、
+    実測値と全体平均をちょうど半々で混ぜた値になる。
+    """
+    raw = {}
+    counts = {}
     for store_id, reviews in store_reviews.items():
         similarities = []
         for _, vec in reviews:
-            # レビューベクトルをL2正規化
             vec_norm = np.linalg.norm(vec)
             if vec_norm > 0:
                 vec = vec / vec_norm
-            # コサイン類似度を計算（0〜1の範囲）
-            sim = float(np.dot(query_vec, vec))
-            similarities.append(sim)
-        store_similarities[store_id] = np.mean(similarities)
-    return store_similarities
+            similarities.append(float(np.dot(query_vec, vec)))
+        raw[store_id] = float(np.mean(similarities))
+        counts[store_id] = len(similarities)
+
+    if not raw:
+        return {}
+
+    prior = float(np.mean(list(raw.values())))
+    return {
+        store_id: (counts[store_id] * raw[store_id] + SHRINKAGE_M * prior)
+                  / (counts[store_id] + SHRINKAGE_M)
+        for store_id in raw
+    }
 
 def normalize_similarities(similarities: Dict[str, float]) -> Dict[str, float]:
     """
