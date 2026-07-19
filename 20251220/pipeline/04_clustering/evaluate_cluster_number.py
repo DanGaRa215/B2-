@@ -53,7 +53,10 @@ def load_sample_vectors(sample_size=50000):
     print(f"読み込み完了: {X.shape}")
     return X
 
-def evaluate_clusters(X, k_values=[10, 20, 30, 40, 50, 75, 100, 150, 200]):
+CURRENT_K = 35   # review_clustering.py の K と揃える
+
+
+def evaluate_clusters(X, k_values=[10, 20, 30, 35, 40, 50, 60, 75, 100, 150]):
     """
     異なるクラスタ数で評価
     """
@@ -112,7 +115,7 @@ def plot_results(results):
     axes[0].set_ylabel('イナーシャ（低いほど良い）')
     axes[0].set_title('エルボー法')
     axes[0].grid(True)
-    axes[0].axvline(x=90, color='r', linestyle='--', label='現在のK=90')
+    axes[0].axvline(x=CURRENT_K, color='r', linestyle='--', label=f'現在のK={CURRENT_K}')
     axes[0].legend()
 
     # シルエット係数
@@ -121,7 +124,7 @@ def plot_results(results):
     axes[1].set_ylabel('シルエット係数（高いほど良い）')
     axes[1].set_title('シルエット係数')
     axes[1].grid(True)
-    axes[1].axvline(x=90, color='r', linestyle='--', label='現在のK=90')
+    axes[1].axvline(x=CURRENT_K, color='r', linestyle='--', label=f'現在のK={CURRENT_K}')
     axes[1].legend()
 
     # Davies-Bouldin指数
@@ -130,7 +133,7 @@ def plot_results(results):
     axes[2].set_ylabel('Davies-Bouldin指数（低いほど良い）')
     axes[2].set_title('Davies-Bouldin指数')
     axes[2].grid(True)
-    axes[2].axvline(x=90, color='r', linestyle='--', label='現在のK=90')
+    axes[2].axvline(x=CURRENT_K, color='r', linestyle='--', label=f'現在のK={CURRENT_K}')
     axes[2].legend()
 
     plt.tight_layout()
@@ -156,12 +159,12 @@ def print_recommendation(results):
     print(f"\n最高シルエット係数: K={best_k_silhouette} (スコア: {results['silhouette'][best_silhouette_idx]:.4f})")
     print(f"最低Davies-Bouldin: K={best_k_db} (スコア: {results['davies_bouldin'][best_db_idx]:.4f})")
 
-    # 現在のK=90の評価
-    if 90 in results['k']:
-        idx_90 = results['k'].index(90)
-        print(f"\n現在のK=90:")
-        print(f"  シルエット係数: {results['silhouette'][idx_90]:.4f}")
-        print(f"  Davies-Bouldin: {results['davies_bouldin'][idx_90]:.4f}")
+    # 現在のKの評価
+    if CURRENT_K in results['k']:
+        idx = results['k'].index(CURRENT_K)
+        print(f"\n現在のK={CURRENT_K}:")
+        print(f"  シルエット係数: {results['silhouette'][idx]:.4f}")
+        print(f"  Davies-Bouldin: {results['davies_bouldin'][idx]:.4f}")
 
     print("\n推奨:")
     print("  - シルエット係数が高い → クラスタが明確に分離")
