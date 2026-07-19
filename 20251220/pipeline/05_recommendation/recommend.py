@@ -8,7 +8,7 @@
 import numpy as np
 import psycopg2
 from sentence_transformers import SentenceTransformer
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import torch
 
 # ========== 設定 ==========
@@ -40,6 +40,19 @@ def load_cluster_centroids(conn) -> Dict[int, np.ndarray]:
     centroids = {}
     for cluster_id, centroid_vec in cur:
         centroids[cluster_id] = np.array(centroid_vec, dtype=np.float32)
+
+    # 重心はあるがレビューが1件も割り当たっていないクラスタを検出する。
+    # K を減らして再クラスタリングすると古い重心が残ることがあり、
+    # そのクラスタが選ばれると何も返さないまま推薦結果が減る。
+    cur.execute("SELECT DISTINCT cluster_id FROM review_clusters")
+    assigned = {row[0] for row in cur}
+    orphans = sorted(set(centroids) - assigned)
+    if orphans:
+        raise RuntimeError(
+            f"レビューが割り当てられていないクラスタがあります: {orphans}\n"
+            f"cluster_centroids と review_clusters が食い違っています。"
+            f"pipeline/04_clustering/review_clustering.py を実行してください。"
+        )
     return centroids
 
 def find_similar_clusters(query_vec: np.ndarray, centroids: Dict[int, np.ndarray], top_k: int) -> List[Tuple[int, float]]:
@@ -93,21 +106,42 @@ def normalize_similarities(similarities: Dict[str, float]) -> Dict[str, float]:
         normalized[store_id] = max(0.0, min(1.0, sim))
     return normalized
 
-def normalize_ratings(ratings: Dict[str, float]) -> Dict[str, float]:
+def normalize_ratings(ratings: Dict[str, Optional[float]]) -> Dict[str, float]:
     """
-    星評価を固定範囲(1.0〜5.0)で正規化
+    星評価を実データの分布に合わせて正規化
+
+    理論上の 1.0〜5.0 で割ると、実際の評価が 3.0〜4.36 に集中しているため
+    正規化後の値が 0.5〜0.84 に圧縮され、店舗間の差がほとんど出なくなる。
+    実データの最小値と最大値を使って 0.0〜1.0 の全域に広げる。
+
+    評価が付いていない店舗は中央値として扱う。0.0 にすると最低評価の店より
+    不利になり、α を下げたときに実質的に推薦から除外されてしまう。
     """
     if not ratings:
         return {}
+
+    values = [r for r in ratings.values() if r is not None]
+    if not values:
+        return {store_id: 0.5 for store_id in ratings}
+
+    lo, hi = min(values), max(values)
+    median = sorted(values)[len(values) // 2]
+    span = hi - lo
+
     normalized = {}
     for store_id, rating in ratings.items():
-        # 食べログの評価範囲: 1.0〜5.0
-        rating = max(1.0, min(5.0, rating))
-        normalized[store_id] = (rating - 1.0) / (5.0 - 1.0)
+        r = median if rating is None else max(lo, min(hi, rating))
+        normalized[store_id] = 0.5 if span == 0 else (r - lo) / span
     return normalized
 
 def calculate_hybrid_scores(conn, query_vec: np.ndarray, cluster_ids: List[int], alpha: float) -> List[Dict]:
     store_reviews = get_reviews_from_clusters(conn, cluster_ids)
+    if not store_reviews:
+        raise RuntimeError(
+            f"クラスタ {cluster_ids} からレビューを1件も取得できませんでした。\n"
+            f"review_clusters にこれらの cluster_id が存在しないか、"
+            f"review_vectors との対応が失われている可能性があります。"
+        )
     store_similarities = calculate_store_similarity(query_vec, store_reviews)
 
     cur = conn.cursor()
@@ -127,7 +161,8 @@ def calculate_hybrid_scores(conn, query_vec: np.ndarray, cluster_ids: List[int],
             'rating': rating,
             'store_url': store_url
         }
-        store_ratings[store_id] = rating if rating else 0.0
+        # None のまま渡す。normalize_ratings が中央値として扱う
+        store_ratings[store_id] = rating
 
     # 類似度を正規化（0〜1にクリッピング）
     normalized_similarities = normalize_similarities(store_similarities)
