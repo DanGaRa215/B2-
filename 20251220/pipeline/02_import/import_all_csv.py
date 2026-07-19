@@ -117,7 +117,7 @@ def import_csv_file(csv_path, conn):
                     cur.executemany("""
                         INSERT INTO reviews (store_id, review_rating, review_date, review_text)
                         VALUES (%s, %s, %s, %s)
-                        ON CONFLICT DO NOTHING
+                        ON CONFLICT (store_id, md5(review_text)) DO NOTHING
                     """, batch)
                     review_count += len(batch)
                     conn.commit()
