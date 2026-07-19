@@ -15,8 +15,8 @@ DB_CONFIG = {
     'user': 'dangararara'
 }
 
-# CSVディレクトリ
-CSV_DIR = Path('/Users/dangararara/lecture/miraisouzou/20251220/data')
+# CSVディレクトリ（20251220/pipeline/02_import/ から見て 20251220/data/）
+CSV_DIR = Path(__file__).resolve().parents[2] / 'data'
 
 def safe_float(value):
     """安全にfloatに変換"""

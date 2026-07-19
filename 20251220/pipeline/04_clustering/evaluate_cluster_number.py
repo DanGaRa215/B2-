@@ -8,6 +8,8 @@ import os
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+from pathlib import Path
+
 import numpy as np
 import psycopg2
 from sklearn.cluster import MiniBatchKMeans
@@ -132,7 +134,7 @@ def plot_results(results):
     axes[2].legend()
 
     plt.tight_layout()
-    plt.savefig('/Users/dangararara/lecture/miraisouzou/20251220/clustering/cluster_evaluation.png', dpi=100)
+    plt.savefig(Path(__file__).resolve().parent / 'cluster_evaluation.png', dpi=100)
     print("\nグラフ保存: cluster_evaluation.png")
 
 def print_recommendation(results):

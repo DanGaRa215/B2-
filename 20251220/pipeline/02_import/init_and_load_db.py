@@ -2,6 +2,7 @@ import psycopg2
 import pandas as pd
 import glob
 import os
+from pathlib import Path
 from tqdm import tqdm
 
 def init_database(db_name='tabelog_db', user='dangararara'):
@@ -66,12 +67,15 @@ def init_database(db_name='tabelog_db', user='dangararara'):
         raise
 
 
-def load_csv_data(conn, cur, data_dir='/Users/dangararara/lecture/miraisouzou/20251220/data'):
+def load_csv_data(conn, cur, data_dir=None):
     """
     全CSVファイルをデータベースに投入
     重複店舗は最初に見つかったものを保持
     """
-    csv_files = glob.glob(os.path.join(data_dir, '*.csv'))
+    if data_dir is None:
+        # 20251220/pipeline/02_import/ から見て 20251220/data/
+        data_dir = Path(__file__).resolve().parents[2] / 'data'
+    csv_files = glob.glob(os.path.join(str(data_dir), '*.csv'))
     print(f"\n{len(csv_files)}個のCSVファイルが見つかりました")
 
     stores_dict = {}  # {store_id: store_info} - 重複排除用

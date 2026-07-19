@@ -5,10 +5,6 @@
 1つのクエリを入力するだけで、α = 0.0, 0.3, 0.7, 1.0 の4つの結果を表示
 """
 
-import sys
-sys.path.append('/Users/dangararara/lecture/miraisouzou/20251220/recommend')
-
-# ノートブックから関数をインポート（実際にはコピー）
 import numpy as np
 import psycopg2
 from sentence_transformers import SentenceTransformer

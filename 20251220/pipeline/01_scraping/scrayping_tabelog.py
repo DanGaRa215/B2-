@@ -3,6 +3,7 @@ import time
 import random
 import csv
 import json
+from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -499,7 +500,7 @@ if __name__ == '__main__':
             target_names=target_areas,
             per_area_start=0,  # 最初から
             per_area_limit=None,  # 全店舗処理
-            url_list_path='/Users/dangararara/lecture/miraisouzou/20251220/scrayping/tabelog_edogawa_sumida_bunkyou_oota.json',  # 事前生成したURLリスト
+            url_list_path=str(Path(__file__).resolve().parent / 'tabelog_edogawa_sumida_bunkyou_oota.json'),  # 事前生成したURLリスト
         )
     finally:
         scraper.close()
