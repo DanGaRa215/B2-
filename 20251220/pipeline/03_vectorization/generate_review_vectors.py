@@ -206,7 +206,7 @@ def generate_vectors(db_name='tabelog_db', user='dangararara'):
         if conn:
             conn.close()
         if 'lock_fp' in locals():
-            fcntl.flock(ock_fp.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
             lock_fp.close()
             print("✓ プロセスロックを解放しました")
 
