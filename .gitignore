@@ -1,16 +1,24 @@
-stop_word/  
+# 実験用ディレクトリ（過去プロジェクト）
+stop_word/
 suku/
 ward_count/
 test/
 TF-IDF/
 recommended/
+
+# Python
 .venv/
+__pycache__/
+*.pyc
 
+# macOS
+.DS_Store
 
-/Users/dangararara/lecture/miraisouzou/20251220/data
+# 大容量データ（GitHub の 100MB 制限を超えるため追跡しない）
 20251220/data/
 20251220/koutou.json
 20251220/tabelog_meguro_koto.json
+tabelog_*_reviews.json
 
-
-
+# 作業ログ
+chat_history.txt
