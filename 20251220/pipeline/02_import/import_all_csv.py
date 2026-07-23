@@ -98,8 +98,11 @@ def import_csv_file(csv_path, conn):
         batch_size = 5000
 
         for idx, row in df.iterrows():
-            # レビュー本文が空ならスキップ
-            if pd.isna(row['レビュー本文']) or str(row['レビュー本文']).strip() == '':
+            # 10文字未満のレビューはスキップ。
+            # '？' や '美味しかった' のような短い本文は SimCSE が意味の薄い
+            # ベクトルを生成し、どのクエリにも弱く一致するノイズになる。
+            text = '' if pd.isna(row['レビュー本文']) else str(row['レビュー本文']).strip()
+            if len(text) < 10:
                 continue
 
             review_date = parse_review_date(row.get('レビュー日付'))
@@ -108,7 +111,7 @@ def import_csv_file(csv_path, conn):
                 row['店舗ID'],
                 safe_float(row['レビュー評価']),
                 review_date,
-                row['レビュー本文']
+                text
             ))
 
             # バッチが溜まったらINSERT
