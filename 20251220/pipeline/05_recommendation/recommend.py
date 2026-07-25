@@ -5,14 +5,10 @@
 1つのクエリを入力するだけで、α = 0.0, 0.3, 0.7, 1.0 の4つの結果を表示
 """
 
-import sys
-sys.path.append('/Users/dangararara/lecture/miraisouzou/20251220/recommend')
-
-# ノートブックから関数をインポート（実際にはコピー）
 import numpy as np
 import psycopg2
 from sentence_transformers import SentenceTransformer
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import torch
 
 # ========== 設定 ==========
@@ -23,6 +19,11 @@ DB_USER = "dangararara"
 MODEL_NAME = 'pkshatech/simcse-ja-bert-base-clcmlp'
 TOP_K_CLUSTERS = 10
 TOP_N_STORES = 5
+
+# 類似度の縮小推定の強さ。レビュー数がこの値のとき、店舗の実測値と
+# 全体平均を半々で混ぜる。0 にすると単純平均に戻り、レビューが
+# 1 件だけの店が上位を独占する。
+SHRINKAGE_M = 5
 
 # モデル初期化
 print(f"モデル読み込み中: {MODEL_NAME}")
@@ -44,6 +45,19 @@ def load_cluster_centroids(conn) -> Dict[int, np.ndarray]:
     centroids = {}
     for cluster_id, centroid_vec in cur:
         centroids[cluster_id] = np.array(centroid_vec, dtype=np.float32)
+
+    # 重心はあるがレビューが1件も割り当たっていないクラスタを検出する。
+    # K を減らして再クラスタリングすると古い重心が残ることがあり、
+    # そのクラスタが選ばれると何も返さないまま推薦結果が減る。
+    cur.execute("SELECT DISTINCT cluster_id FROM review_clusters")
+    assigned = {row[0] for row in cur}
+    orphans = sorted(set(centroids) - assigned)
+    if orphans:
+        raise RuntimeError(
+            f"レビューが割り当てられていないクラスタがあります: {orphans}\n"
+            f"cluster_centroids と review_clusters が食い違っています。"
+            f"pipeline/04_clustering/review_clustering.py を実行してください。"
+        )
     return centroids
 
 def find_similar_clusters(query_vec: np.ndarray, centroids: Dict[int, np.ndarray], top_k: int) -> List[Tuple[int, float]]:
@@ -73,19 +87,37 @@ def get_reviews_from_clusters(conn, cluster_ids: List[int]) -> Dict[str, List[Tu
     return store_reviews
 
 def calculate_store_similarity(query_vec: np.ndarray, store_reviews: Dict[str, List[Tuple[int, np.ndarray]]]) -> Dict[str, float]:
-    store_similarities = {}
+    """
+    店舗ごとのクエリとの類似度を求める
+
+    単純平均を取ると、レビューが 1 件しかない店がその 1 件の当たり外れで
+    最上位にも最下位にもなる。実際に上位 20 店がすべてレビュー 1 件の店で
+    占められていたため、件数が少ない店の値を全体平均へ寄せる。
+
+    寄せる強さは SHRINKAGE_M で決まる。レビュー数がこの値のとき、
+    実測値と全体平均をちょうど半々で混ぜた値になる。
+    """
+    raw = {}
+    counts = {}
     for store_id, reviews in store_reviews.items():
         similarities = []
         for _, vec in reviews:
-            # レビューベクトルをL2正規化
             vec_norm = np.linalg.norm(vec)
             if vec_norm > 0:
                 vec = vec / vec_norm
-            # コサイン類似度を計算（0〜1の範囲）
-            sim = float(np.dot(query_vec, vec))
-            similarities.append(sim)
-        store_similarities[store_id] = np.mean(similarities)
-    return store_similarities
+            similarities.append(float(np.dot(query_vec, vec)))
+        raw[store_id] = float(np.mean(similarities))
+        counts[store_id] = len(similarities)
+
+    if not raw:
+        return {}
+
+    prior = float(np.mean(list(raw.values())))
+    return {
+        store_id: (counts[store_id] * raw[store_id] + SHRINKAGE_M * prior)
+                  / (counts[store_id] + SHRINKAGE_M)
+        for store_id in raw
+    }
 
 def normalize_similarities(similarities: Dict[str, float]) -> Dict[str, float]:
     """
@@ -97,21 +129,49 @@ def normalize_similarities(similarities: Dict[str, float]) -> Dict[str, float]:
         normalized[store_id] = max(0.0, min(1.0, sim))
     return normalized
 
-def normalize_ratings(ratings: Dict[str, float]) -> Dict[str, float]:
+def normalize_ratings(ratings: Dict[str, Optional[float]]) -> Dict[str, float]:
     """
-    星評価を固定範囲(1.0〜5.0)で正規化
+    星評価を実データの分布に合わせて正規化
+
+    理論上の 1.0〜5.0 で割ると、実際の評価が 3.0〜4.36 に集中しているため
+    正規化後の値が 0.5〜0.84 に圧縮され、店舗間の差がほとんど出なくなる。
+    実データの最小値と最大値を使って 0.0〜1.0 の全域に広げる。
+
+    評価が付いていない店舗は中央値として扱う。0.0 にすると最低評価の店より
+    不利になり、α を下げたときに実質的に推薦から除外されてしまう。
     """
     if not ratings:
         return {}
+
+    values = [r for r in ratings.values() if r is not None]
+    if not values:
+        return {store_id: 0.5 for store_id in ratings}
+
+    lo, hi = min(values), max(values)
+    median = sorted(values)[len(values) // 2]
+    span = hi - lo
+
     normalized = {}
     for store_id, rating in ratings.items():
-        # 食べログの評価範囲: 1.0〜5.0
-        rating = max(1.0, min(5.0, rating))
-        normalized[store_id] = (rating - 1.0) / (5.0 - 1.0)
+        r = median if rating is None else max(lo, min(hi, rating))
+        normalized[store_id] = 0.5 if span == 0 else (r - lo) / span
     return normalized
 
-def calculate_hybrid_scores(conn, query_vec: np.ndarray, cluster_ids: List[int], alpha: float) -> List[Dict]:
+def build_store_scores(conn, query_vec: np.ndarray, cluster_ids: List[int]) -> Dict[str, Dict]:
+    """
+    店舗ごとの類似度と評価を求める（α に依存しない部分）
+
+    上位クラスタのレビューは 40 万件規模あり、ベクトルの取得だけで数 GB になる。
+    α の値ごとに取り直すと同じ処理を 4 回繰り返すことになるため、
+    α を含まない計算はここで 1 回だけ済ませる。
+    """
     store_reviews = get_reviews_from_clusters(conn, cluster_ids)
+    if not store_reviews:
+        raise RuntimeError(
+            f"クラスタ {cluster_ids} からレビューを1件も取得できませんでした。\n"
+            f"review_clusters にこれらの cluster_id が存在しないか、"
+            f"review_vectors との対応が失われている可能性があります。"
+        )
     store_similarities = calculate_store_similarity(query_vec, store_reviews)
 
     cur = conn.cursor()
@@ -131,27 +191,34 @@ def calculate_hybrid_scores(conn, query_vec: np.ndarray, cluster_ids: List[int],
             'rating': rating,
             'store_url': store_url
         }
-        store_ratings[store_id] = rating if rating else 0.0
+        # None のまま渡す。normalize_ratings が中央値として扱う
+        store_ratings[store_id] = rating
 
-    # 類似度を正規化（0〜1にクリッピング）
     normalized_similarities = normalize_similarities(store_similarities)
-    # 星評価を固定範囲(1.0〜5.0)で正規化
     normalized_ratings = normalize_ratings(store_ratings)
 
-    hybrid_scores = []
+    scores = {}
     for store_id in store_similarities:
-        norm_similarity = normalized_similarities.get(store_id, 0.0)
-        norm_rating = normalized_ratings.get(store_id, 0.0)
-        hybrid_score = alpha * norm_similarity + (1 - alpha) * norm_rating
-
+        if store_id not in store_info:
+            continue
         info = store_info[store_id].copy()
-        info['similarity_score'] = norm_similarity
-        info['normalized_rating'] = norm_rating
-        info['hybrid_score'] = hybrid_score
-        hybrid_scores.append(info)
+        info['similarity_score'] = normalized_similarities.get(store_id, 0.0)
+        info['normalized_rating'] = normalized_ratings.get(store_id, 0.0)
+        scores[store_id] = info
+    return scores
 
-    hybrid_scores.sort(key=lambda x: x['hybrid_score'], reverse=True)
-    return hybrid_scores
+
+def rank_by_alpha(scores: Dict[str, Dict], alpha: float) -> List[Dict]:
+    """build_store_scores の結果に α を適用して並べ替える"""
+    ranked = []
+    for info in scores.values():
+        info = info.copy()
+        info['hybrid_score'] = (
+            alpha * info['similarity_score'] + (1 - alpha) * info['normalized_rating']
+        )
+        ranked.append(info)
+    ranked.sort(key=lambda x: x['hybrid_score'], reverse=True)
+    return ranked
 
 def get_sample_reviews(conn, store_id: str, cluster_ids: List[int], limit: int = 2) -> List[str]:
     cur = conn.cursor()
@@ -189,6 +256,11 @@ def recommend_with_all_alphas(query: str, top_n: int = 5):
     print(f"類似クラスタ (Top {TOP_K_CLUSTERS}):", end=" ")
     print(", ".join([f"cluster_{cid}" for cid, _ in similar_clusters[:5]]) + "...")
 
+    # α に依存しない計算はここで 1 回だけ行う
+    print("レビューを集計中...")
+    scores = build_store_scores(conn, query_vec, cluster_ids)
+    print(f"対象店舗: {len(scores):,} 件")
+
     # 4つのα値で推薦
     alpha_values = [0.0, 0.3, 0.7, 1.0]
 
@@ -197,7 +269,7 @@ def recommend_with_all_alphas(query: str, top_n: int = 5):
         print(f"α = {alpha} (クエリ類似度: {alpha*100:.0f}%, 星評価: {(1-alpha)*100:.0f}%)")
         print("=" * 80)
 
-        ranked_stores = calculate_hybrid_scores(conn, query_vec, cluster_ids, alpha=alpha)
+        ranked_stores = rank_by_alpha(scores, alpha)
         top_stores = ranked_stores[:top_n]
 
         for i, store in enumerate(top_stores, 1):
@@ -223,6 +295,6 @@ def recommend_with_all_alphas(query: str, top_n: int = 5):
 # ========== 実行 ==========
 if __name__ == "__main__":
     # ここにクエリを入力するだけ！
-    recommend_with_all_alphas("アンティークでレトロなカフェ", top_n=5)
+    recommend_with_all_alphas("デートで使える落ち着いた雰囲気の店", top_n=5)
 
-    recommend_with_all_alphas("特別な日に使えそうな感じで静かで落ち着ける", top_n=5)
+    recommend_with_all_alphas("気軽にコスパよく友達と行ける", top_n=5)

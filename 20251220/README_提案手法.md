@@ -361,18 +361,27 @@ recommend_with_all_alphas("ロマンチックなイタリアン", top_n=5)
 
 ```
 20251220/
-├── text_embedding/
-│   └── generate_store_vectors_v6_review_based.py  # レビューベクトル化
-├── clustering/
-│   ├── review_clustering_v2.py                    # クラスタリング実行
-│   ├── check_clusters_status.py                   # クラスタ確認
-│   └── cleanup_old_centroids.py                   # クラスタ削除
-├── recommend/
-│   ├── simple_recommend.py                        # 推薦システム（簡易版）
-│   ├── restaurant_recommender_v1.ipynb            # Jupyter版
-│   └── improved_normalize.py                      # 正規化手法比較
-└── README_提案手法.md                              # 本ドキュメント
+├── pipeline/                                       # 本手法の処理パイプライン
+│   ├── 01_scraping/
+│   │   └── scrayping_tabelog.py                    # 食べログのスクレイピング
+│   ├── 02_import/
+│   │   └── import_all_csv.py                       # CSV を PostgreSQL に投入
+│   ├── 03_vectorization/
+│   │   └── generate_review_vectors.py              # レビューのベクトル化（SimCSE）
+│   ├── 04_clustering/
+│   │   ├── review_clustering.py                    # K-means クラスタリング
+│   │   └── evaluate_cluster_number.py              # 最適なクラスタ数の評価
+│   └── 05_recommendation/
+│       └── recommend.py                            # 推薦システム
+├── utils/                                          # DB 確認用
+├── debug/                                          # 各工程の調査用
+├── notebooks/                                      # Jupyter Notebook
+├── deprecated/                                     # 旧実装（削除予定）
+├── data/                                           # スクレイピング済み CSV
+└── README_提案手法.md                               # 本ドキュメント
 ```
+
+ディレクトリの番号は実行順序を表す。詳細な実行手順は `pipeline/README.md` を参照。
 
 ---
 

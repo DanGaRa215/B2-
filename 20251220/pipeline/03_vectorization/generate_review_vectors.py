@@ -68,7 +68,7 @@ def generate_vectors(db_name='tabelog_db', user='dangararara'):
         print(f"全レビュー数: {total_reviews:,} 件")
 
         # レビューベクトルを保存するための一時テーブルを作成
-        print("一時テーブルを作成中...")
+        print("テーブルを確認中...")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS review_vectors (
                 review_id INTEGER PRIMARY KEY,
@@ -77,25 +77,28 @@ def generate_vectors(db_name='tabelog_db', user='dangararara'):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # 既存のインデックスを削除して再作成
-        cur.execute("DROP INDEX IF EXISTS idx_review_vectors_store_id")
-        cur.execute("CREATE INDEX idx_review_vectors_store_id ON review_vectors(store_id)")
         conn.commit()
 
-        # 既に処理済みのレビュー数を確認
-        cur.execute("SELECT COUNT(*) FROM review_vectors")
-        already_processed = cur.fetchone()[0]
-        print(f"既に処理済み: {already_processed:,} 件")
+        # インデックス作成はスキップ（後で手動で作成可能）
+        # cur.execute("CREATE INDEX IF NOT EXISTS idx_review_vectors_store_id ON review_vectors(store_id)")
+        print("✓ テーブル確認完了")
+
+        # 既に処理済みのレビュー数を確認（COUNTは遅いのでスキップ）
+        # cur.execute("SELECT COUNT(*) FROM review_vectors")
+        # already_processed = cur.fetchone()[0]
+        already_processed = 0  # 簡略化のため0に設定
+        print(f"処理済みカウントはスキップ（進捗表示は未処理分のみ表示）")
 
         # 未処理のレビューデータのみを取得（review_id, review_text, store_id）
+        # LEFT JOINで高速化（NOT INより数十倍高速）
         print("未処理のレビューデータを取得中...")
         query = """
-        SELECT review_id, review_text, store_id
-        FROM reviews
-        WHERE review_text IS NOT NULL AND review_text != ''
-          AND review_id NOT IN (SELECT review_id FROM review_vectors)
-        ORDER BY review_id
+        SELECT r.review_id, r.review_text, r.store_id
+        FROM reviews r
+        LEFT JOIN review_vectors rv ON r.review_id = rv.review_id
+        WHERE r.review_text IS NOT NULL AND r.review_text != ''
+          AND rv.review_id IS NULL
+        ORDER BY r.review_id
         """
         cur.execute(query)
         all_reviews = cur.fetchall()  # 先に全て取得
@@ -144,13 +147,16 @@ def generate_vectors(db_name='tabelog_db', user='dangararara'):
                     conn.commit()
                     processed_count += len(review_batch)
 
-                    # 進捗表示（100件ごと）
-                    if processed_count % 100 == 0:
+                    # 進捗表示（1000件ごと）
+                    if processed_count % 1000 == 0 or processed_count == len(review_batch):
                         progress_pct = processed_count / len(all_reviews) * 100
                         total_with_existing = already_processed + processed_count
                         overall_pct = total_with_existing / total_reviews * 100
-                        elapsed_batches = processed_count // batch_size
-                        print(f"  レビュー処理: {processed_count:,}/{len(all_reviews):,} ({progress_pct:.1f}%) | 全体: {total_with_existing:,}/{total_reviews:,} ({overall_pct:.1f}%) | バッチ {elapsed_batches}")
+                        # プログレスバー風表示
+                        bar_length = 40
+                        filled = int(bar_length * progress_pct / 100)
+                        bar = '█' * filled + '░' * (bar_length - filled)
+                        print(f"  [{bar}] {progress_pct:.1f}% | 処理: {processed_count:,}/{len(all_reviews):,} | 全体: {total_with_existing:,}/{total_reviews:,} ({overall_pct:.1f}%)")
 
                 except Exception as e:
                     print(f"  ⚠️  バッチ処理エラー: {e}")
