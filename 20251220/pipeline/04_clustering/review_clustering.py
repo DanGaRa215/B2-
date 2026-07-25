@@ -30,7 +30,7 @@ VEC_COL = "feature_vector"
 OUT_ASSIGN_TABLE = "review_clusters"
 OUT_CENTROID_TABLE = "cluster_centroids"
 
-K = 35
+K = 20
 USE_L2_NORMALIZE = True
 FETCH_CHUNK = 5000
 MBK_BATCH_SIZE = 4096

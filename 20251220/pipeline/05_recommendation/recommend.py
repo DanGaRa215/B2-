@@ -17,7 +17,7 @@ DB_NAME = "tabelog_db"
 DB_USER = "dangararara"
 
 MODEL_NAME = 'pkshatech/simcse-ja-bert-base-clcmlp'
-TOP_K_CLUSTERS = 10
+TOP_K_CLUSTERS = 2
 TOP_N_STORES = 5
 
 # 類似度の縮小推定の強さ。レビュー数がこの値のとき、店舗の実測値と
