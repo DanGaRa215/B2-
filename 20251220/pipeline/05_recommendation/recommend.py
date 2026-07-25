@@ -121,12 +121,36 @@ def calculate_store_similarity(query_vec: np.ndarray, store_reviews: Dict[str, L
 
 def normalize_similarities(similarities: Dict[str, float]) -> Dict[str, float]:
     """
-    類似度を正規化（既に0〜1の範囲なのでクリッピングのみ）
+    類似度を実データの分布に合わせて正規化
+
+    以前はクリッピングだけしていたが、これは実測で何もしていなかった。
+    コサイン類似度が 0〜1 を外れることが一度もないためで、正規化の前後で
+    分布が完全に一致していた（min 0.4111 → 0.4111, max 0.5986 → 0.5986）。
+
+    一方 normalize_ratings() は評価を 0〜1 の全域に引き伸ばしている。
+    片方だけ引き伸ばすと、類似度は std 0.019〜0.023 の狭い帯のまま、
+    評価は std 0.129〜0.131 に広がり、ハイブリッドスコアで評価側が
+    支配的になる。両者の寄与が釣り合う α が 0.85〜0.87 まで偏り、
+    α=0.7 と指定しても実際には評価が 2.9 倍効いている状態だった。
+    どのクエリでも上位に同じ店が並ぶのはこれが原因。
+
+    評価側と同じ相対 min-max で類似度も引き伸ばし、土俵を揃える。
+
+    これは暫定措置。入力層に評価の補正を入れる段で、評価成分は補正済みの
+    値に置き換わる。その分布を見てから融合層の正規化方式を設計し直すため、
+    ここは作り込まない。min-max が外れ値に依存する点も、その段で
+    評価側ごと差し替えるので今は許容する。
     """
+    if not similarities:
+        return {}
+
+    values = list(similarities.values())
+    lo, hi = min(values), max(values)
+    span = hi - lo
+
     normalized = {}
     for store_id, sim in similarities.items():
-        # 0〜1の範囲にクリッピング
-        normalized[store_id] = max(0.0, min(1.0, sim))
+        normalized[store_id] = 0.5 if span == 0 else (sim - lo) / span
     return normalized
 
 def normalize_ratings(ratings: Dict[str, Optional[float]]) -> Dict[str, float]:
