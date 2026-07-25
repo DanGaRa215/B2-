@@ -75,7 +75,7 @@ CREATE TABLE review_vectors (
 
 ### 3.1 クラスタリング手法
 - **アルゴリズム**: MiniBatchKMeans
-- **クラスタ数**: K=50
+- **クラスタ数**: K=20（IVF方式のrecall/selectivity評価により決定。README.mdの「既知の性質」参照）
 - **正規化**: L2正規化（クラスタリング前）
 
 ### 3.2 目的
@@ -85,9 +85,9 @@ CREATE TABLE review_vectors (
 
 ### 3.3 クラスタリング結果
 ```
-総レビュー数: 435,968件
-クラスタ数: 50個
-平均レビュー数/クラスタ: 約8,719件
+総レビュー数: 1,057,505件
+クラスタ数: 20個
+平均レビュー数/クラスタ: 約52,875件
 ```
 
 ### 3.4 データベーススキーマ
@@ -131,16 +131,16 @@ query_vec = query_vec / np.linalg.norm(query_vec)  # L2正規化
 
 #### **Step 2: 類似クラスタ検索**
 ```python
-# 50個のクラスタ中心とクエリの類似度を計算
+# 20個のクラスタ中心とクエリの類似度を計算
 similarities = [cosine_sim(query_vec, centroid) for centroid in centroids]
 
-# 上位K個のクラスタを選択（K=10）
-top_k_clusters = top_k(similarities, k=10)
+# 上位K個のクラスタを選択（K=2）
+top_k_clusters = top_k(similarities, k=2)
 ```
 
 **計算量削減:**
-- 全レビュー検索: O(435,968)
-- クラスタ検索: O(50) + O(87,190) = **約80%削減**
+- 全レビュー検索: O(1,057,505)
+- クラスタ検索: O(20) + O(105,750) = **約90%削減**
 
 #### **Step 3: 候補店舗の抽出**
 ```python
@@ -257,8 +257,8 @@ normalized = (4.5 - 1.0) / (5.0 - 1.0) = 0.875 # 評価4.5
    - "ロマンチック"などの抽象的なクエリに対応
 
 2. **計算効率**
-   - クラスタリングで検索空間を約80%削減
-   - K=50クラスタ → 平均8,700件/クラスタのみ処理
+   - クラスタリングで検索空間を約90%削減
+   - K=20クラスタ → 平均52,875件/クラスタ、うち上位2クラスタのみ処理
 
 3. **柔軟性**
    - αパラメータで意味と品質のバランスを調整可能
@@ -304,11 +304,11 @@ MODEL_NAME = 'pkshatech/simcse-ja-bert-base-clcmlp'
 VECTOR_DIM = 768
 
 # クラスタリング
-NUM_CLUSTERS = 50
+NUM_CLUSTERS = 20
 BATCH_SIZE = 4096
 
 # 推薦
-TOP_K_CLUSTERS = 10
+TOP_K_CLUSTERS = 2
 TOP_N_STORES = 5
 ALPHA = 0.7  # デフォルト値
 ```
